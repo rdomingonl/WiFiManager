@@ -12,6 +12,7 @@
 
 #include "WiFiManager.h"
 
+
 WiFiManagerParameter::WiFiManagerParameter(const char *custom) {
   _id = NULL;
   _placeholder = NULL;
@@ -125,12 +126,15 @@ void WiFiManager::setupConfigPortal() {
   //optional soft ip config
   if (_ap_static_ip) {
     DEBUG_WM(F("Custom AP IP/GW/Subnet"));
+		DEBUG_WM(F("wifi.softAPConfig"));
     WiFi.softAPConfig(_ap_static_ip, _ap_static_gw, _ap_static_sn);
   }
 
   if (_apPassword != NULL) {
+		DEBUG_WM(F("wifi.softAP"));
     WiFi.softAP(_apName, _apPassword);//password option
   } else {
+		DEBUG_WM(F("wifi.softAP"));
     WiFi.softAP(_apName);
   }
 
@@ -149,6 +153,7 @@ void WiFiManager::setupConfigPortal() {
   server->on(String(F("/wifisave")), std::bind(&WiFiManager::handleWifiSave, this));
   server->on(String(F("/i")), std::bind(&WiFiManager::handleInfo, this));
   server->on(String(F("/r")), std::bind(&WiFiManager::handleReset, this));
+  server->on(String(F("/e")), std::bind(&WiFiManager::handleExit, this));
   //server->on("/generate_204", std::bind(&WiFiManager::handle204, this));  //Android/Chrome OS captive portal check.
   server->on(String(F("/fwlink")), std::bind(&WiFiManager::handleRoot, this));  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
   server->onNotFound (std::bind(&WiFiManager::handleNotFound, this));
@@ -162,7 +167,11 @@ boolean WiFiManager::autoConnect() {
   return autoConnect(ssid.c_str(), NULL);
 }
 
-boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
+//boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
+//	return autoConnect(apName, apPassword, true);
+//}
+
+boolean WiFiManager::autoConnect(char const *apName, char const *apPassword, boolean startConfigPortalOnConnectionFailure) {
   DEBUG_WM(F(""));
   DEBUG_WM(F("AutoConnect"));
 
@@ -171,16 +180,25 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
   //String pass = getPassword();
 
   // attempt to connect; should it fail, fall back to AP
+	DEBUG_WM(F("wifi.setMode(WIFI_STA"));
   WiFi.mode(WIFI_STA);
 
   if (connectWifi("", "") == WL_CONNECTED)   {
+    DEBUG_WM(F("Connected"));
     DEBUG_WM(F("IP Address:"));
     DEBUG_WM(WiFi.localIP());
     //connected
     return true;
   }
+	DEBUG_WM(F("Not Connected"));
 
-  return startConfigPortal(apName, apPassword);
+  if (startConfigPortalOnConnectionFailure) {
+		DEBUG_WM(F("startConfigPortal"));
+		return startConfigPortal(apName, apPassword);
+	} else {
+		DEBUG_WM(F("skip startConfigPortal"));
+		return false;
+	}
 }
 
 boolean WiFiManager::configPortalHasTimeout(){
@@ -198,15 +216,21 @@ boolean WiFiManager::startConfigPortal() {
 
 boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPassword) {
   
+	DEBUG_WM(F("wifi.isConnected"));
   if(!WiFi.isConnected()){
+		DEBUG_WM(F("wifi.persistent false"));
     WiFi.persistent(false);
     // disconnect sta, start ap
+		DEBUG_WM(F("wifi.disconnect"));
     WiFi.disconnect(); //  this alone is not enough to stop the autoconnecter
+		DEBUG_WM(F("wifi.mode WIFI_AP"));
     WiFi.mode(WIFI_AP);
+		DEBUG_WM(F("wifi.peersistent true"));
     WiFi.persistent(true);
   } 
   else {
     //setup AP
+		DEBUG_WM(F("wifi.mode wifi_ap_sta"));
     WiFi.mode(WIFI_AP_STA);
     DEBUG_WM(F("SET AP STA"));
   }
@@ -228,6 +252,11 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
     // check if timeout
     if(configPortalHasTimeout()) break;
 
+    if(_exit) {
+      _exit = false;
+      break;
+    }
+
     //DNS
     dnsServer->processNextRequest();
     //HTTP
@@ -244,6 +273,7 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
         DEBUG_WM(F("Failed to connect."));
       } else {
         //connected
+				DEBUG_WM(F("wifi.mode wifi_sta"));
         WiFi.mode(WIFI_STA);
         //notify that configuration has changed and any optional parameters should be saved
         if ( _savecallback != NULL) {
@@ -266,7 +296,9 @@ boolean  WiFiManager::startConfigPortal(char const *apName, char const *apPasswo
     yield();
   }
 
+	DEBUG_WM(F("server.reset"));
   server.reset();
+	DEBUG_WM(F("dnsserver.reset"));
   dnsServer.reset();
 
   return  WiFi.status() == WL_CONNECTED;
@@ -310,6 +342,7 @@ int WiFiManager::connectWifi(String ssid, String pass) {
   //not connected, WPS enabled, no pass - first attempt
   #ifdef NO_EXTRA_4K_HEAP
   if (_tryWPS && connRes != WL_CONNECTED && pass == "") {
+    DEBUG_WM ("startWPS");
     startWPS();
     //should be connected at the end of WPS
     connRes = waitForConnectResult();
@@ -692,6 +725,11 @@ void WiFiManager::handleInfo() {
   server->send(200, "text/html", page);
 
   DEBUG_WM(F("Sent info page"));
+}
+
+void WiFiManager::handleExit() {
+  DEBUG_WM(F("Exit"));
+  _exit = true;
 }
 
 /** Handle the reset page */
